@@ -16,13 +16,21 @@ from app_tokens import *
 
 api_url = 'https://api.twitter.com/1.1/'
 KEY_LENGTH = 4096 #the best a man can get
+private_key = None
 
-def load_user():
-    with open('user_tokens', 'a+') as token_file:
+def load_user(screen_name):
+    with open('tokens/tokens_'+screen_name, 'a+') as token_file:
         token_file.seek(0) # to get back to the beginning
         access_token_key = token_file.readline().strip()
         if access_token_key:
             access_token_secret = token_file.readline().strip()
+            with open('keys/key_'+screen_name, 'r') as f:
+                p_key = f.read()
+            password = raw_input('please enter your password!\n')
+            global private_key
+            private_key = RSA.importKey(p_key, passphrase=password)
+            password = None
+            auth = OAuth1(consumer_key, consumer_secret, access_token_key, access_token_secret)
         else:
             #new user - get new keys!
             oauth = OAuth1(consumer_key, consumer_secret)
@@ -40,14 +48,15 @@ def load_user():
                     access_token_key,
                     access_token_secret, 
                     verifier=verifier)
-            r = requests.post(url='https://api.twitter.com/oauth/access_token', auth=oauth)
+            r = requests.post('https://api.twitter.com/oauth/access_token', auth=oauth)
             credentials = parse_qs(r.content)
             access_token_key = credentials.get('oauth_token')[0]
             access_token_secret = credentials.get('oauth_token_secret')[0]
             token_file.write("%s\n" % access_token_key)
-
             token_file.write("%s\n" % access_token_secret)
-        return (access_token_key, access_token_secret)
+            auth = OAuth1(consumer_key, consumer_secret, access_token_key, access_token_secret)
+            create_key(auth)
+        return auth
 
 def upload_profile_pic(auth, media):
     endpoint = 'account/update_profile_image.json'
@@ -105,11 +114,16 @@ def create_key(auth):
     random_gen = Random.new().read
     keypair = RSA.generate(KEY_LENGTH, random_gen)
     mypub = keypair.publickey().exportKey()
+    secret = raw_input('''input a password to protect your key! 
+                            as large as humanely possible, or, larger!\n''')
+    pwed_key = keypair.exportKey('PEM', secret, pkcs=1)
+    with open('keys/key_'+screen_name, 'w') as f:
+        f.write(pwed_key)
     stepic.encode_inplace(img_data, mypub)
     img_data.save('/tmp/test.png')
     with open('/tmp/test.png') as f:
         p = f.read()
-    #upload_profile_pic(auth, p)
+    upload_profile_pic(auth, p)
     #print stepic.decode(img_data)
     #key = get_public_key(auth, screen_name='69inthesunshine')
     #print key.exportKey()
@@ -117,16 +131,17 @@ def create_key(auth):
     with open(user+'_profile.png', 'wb') as profile_pic:
         profile_pic.write(img_data)
         '''
-def tweet_friend(auth, screen_name):
+def tweet_friend(auth, screen_name, message):
     pub = get_public_key(auth, screen_name=screen_name)
     seed = Random.new().read
-    mess = pub.encrypt('hello, world!', seed)
+    mess = pub.encrypt(message, seed)
     img_data = load_img_from_file('new_template.png')
     stepic.encode_inplace(img_data, mess[0])
     img_data.save('/tmp/test.png')
     with open('/tmp/test.png') as f:
         p = f.read()
         media_id = upload_media(auth, p)
+    print 'uploaded media'
     endpoint = 'statuses/update.json'
     params = {"status":"@"+screen_name + " secret!", "media_ids":media_id}
     r = requests.post(api_url+endpoint, params=params, auth=auth)
@@ -142,12 +157,12 @@ def get_tweets(auth):
             for u in  i["entities"]["media"]:
                 print u["media_url_https"]
                 message = stepic.decode(get_Image_from_url( u["media_url_https"]+':large'))
-                print bytes(message)
+                print private_key.decrypt(message)
 
 
 if __name__ == '__main__':
-    access_token_key, access_token_secret = load_user()
-    auth = OAuth1(consumer_key, consumer_secret, access_token_key, access_token_secret)
+    user = raw_input('please enter your username:\n')
+    auth = load_user(user)
     user_input = raw_input('''what would you like to do?
             1. Create a new Key
             2. Securely tweet a friend
@@ -161,7 +176,8 @@ if __name__ == '__main__':
     r = requests.post(api_url+endpoint, params=params, auth=auth)
     print r.text
     #create_key(auth)
-    #tweet_friend(auth, '69inthesunshine')
+    message = 'this is a test'
+    tweet_friend(auth, '69inthesunshine', message)
     get_tweets(auth)
     
     print user_input
